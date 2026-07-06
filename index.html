@@ -174,7 +174,15 @@ input,select{font-family:inherit;font-size:16px}
 .dsection h4::before{content:"";width:7px;height:7px;border-radius:50%;flex:none}
 .dsection.di h4::before{background:var(--rise)}
 .dsection.db h4::before{background:var(--fall)}
+.dsection.dv h4::before{background:var(--fall-deep)}
 .dsection.do h4::before{background:var(--brick)}
+.secttot{margin-left:auto;font-weight:600;color:var(--fall-deep);text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums}
+.catsum{cursor:pointer}
+.cattwist{display:inline-block;width:14px;color:var(--haze);font-size:11px}
+.catcount{font-size:11px;color:var(--haze-dim);margin-left:6px;font-weight:400}
+.catentries{padding-left:14px}
+.subrow{opacity:.85}
+.subrow .rname{font-size:13.5px}
 .row{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px}
 .row:active{background:var(--overlay)}
 .row .rday{font-size:11px;color:var(--haze-dim);width:38px;flex:none}
@@ -182,6 +190,8 @@ input,select{font-family:inherit;font-size:16px}
 .row .ramt{font-size:14.5px;font-weight:600}
 .row.in .ramt{color:var(--rise-deep)} .row.out .ramt{color:var(--fall-deep)}
 .empty-line{color:var(--haze-dim);font-size:13px;padding:6px 10px;font-style:italic}
+.onceflag{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--sun);background:var(--overlay);padding:1px 6px;border-radius:999px;vertical-align:middle}
 
 /* ---------- FAB (the sun-glow you love — kept, now warm sunlight on paper) ---------- */
 .fab{position:fixed;right:20px;bottom:calc(env(safe-area-inset-bottom,0) + 22px);z-index:30;
@@ -219,7 +229,18 @@ input,select{font-family:inherit;font-size:16px}
 .seg button.on{background:var(--seg-on);color:var(--ink);box-shadow:0 1px 3px rgba(120,80,30,.18)}
 .seg button.on[data-k=income]{color:var(--rise-deep)}
 .seg button.on[data-k=bill]{color:var(--fall-deep)}
+.seg button.on[data-k=variable]{color:var(--fall-deep)}
 .seg button.on[data-k=oneoff]{color:var(--brick)}
+.seg button.on[data-dir=in]{color:var(--rise-deep)}
+.seg button.on[data-dir=out]{color:var(--fall-deep)}
+.seg button.on[data-mode]{color:var(--fall-deep)}
+.seg-grid{flex-wrap:wrap}
+.seg-grid button{flex:1 1 40%;min-width:0}
+.catgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+.catbtn{padding:11px 6px;border-radius:11px;background:var(--input-bg);
+  border:1px solid var(--sky-line);color:var(--ink);font-size:13.5px;font-weight:600}
+.catbtn.on{border-color:var(--fall);background:var(--overlay);color:var(--fall-deep)}
+.catbtn:active{border-color:var(--fall)}
 .row2{display:flex;gap:12px}
 .row2 .field{flex:1}
 .sheet-actions{display:flex;gap:12px;margin-top:8px}
@@ -347,11 +368,32 @@ body.locked{overflow:hidden;position:fixed;width:100%}
   </div>
 
   <div class="field">
-    <label>Money in or out?</label>
-    <div class="seg" id="kindSeg">
-      <button data-k="income">Coming in</button>
-      <button data-k="bill">A bill</button>
+    <label>What kind?</label>
+    <div class="seg seg-grid" id="kindSeg">
+      <button data-k="income">Income</button>
+      <button data-k="bill">Bill</button>
+      <button data-k="variable">Spending</button>
       <button data-k="oneoff">One-time</button>
+    </div>
+  </div>
+
+  <!-- variable expense category -->
+  <div id="varBlock" style="display:none">
+    <div class="field">
+      <label>What kind of spending?</label>
+      <div class="catgrid" id="catGrid"></div>
+      <input type="text" id="fCatCustom" placeholder="or type your own…" autocomplete="off" style="margin-top:9px">
+    </div>
+    <div class="field">
+      <label>One purchase, or a monthly guess?</label>
+      <div class="seg" id="varModeSeg">
+        <button data-mode="once">Just this one</button>
+        <button data-mode="monthly">Monthly guess</button>
+      </div>
+    </div>
+    <div class="field" id="varDateField">
+      <label>When was it?</label>
+      <input type="date" id="fVarDate">
     </div>
   </div>
 
@@ -383,6 +425,13 @@ body.locked{overflow:hidden;position:fixed;width:100%}
 
   <!-- one-off "when" -->
   <div id="onceBlock" style="display:none">
+    <div class="field">
+      <label>Is this money in or out?</label>
+      <div class="seg" id="onceDirSeg">
+        <button data-dir="out">Money out</button>
+        <button data-dir="in">Money in</button>
+      </div>
+    </div>
     <div class="field">
       <label>When is it?</label>
       <input type="date" id="fOnceDate">

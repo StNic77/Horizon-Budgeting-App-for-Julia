@@ -11,7 +11,7 @@
    ============================================================ */
 
 /* ---------- state ---------- */
-const APP_BUILD = 'horizon-10-clear';
+const APP_BUILD = 'horizon-12-variable';
 
 let state = {
   build: APP_BUILD,
@@ -35,16 +35,27 @@ let state = {
 
 /* Item shape:
    {
-     id, kind:'income'|'bill'|'oneoff',
+     id, kind:'income'|'bill'|'oneoff'|'variable',
      name,
-     // recurring items: base is an ordered list of effective-from segments
-     base: [ { from:'2026-07', amount:120 }, ... ],   // for income/bill
+     // recurring items (income/bill, and monthly-estimate variables):
+     base: [ { from:'2026-07', amount:120 }, ... ],
      // one-off items use a single date + amount instead of base/recur
-     amount,                                          // for oneoff only
-     date,                                            // for oneoff only ('YYYY-MM-DD')
+     amount,                                          // oneoff / once-variable
+     date,                                            // oneoff / once-variable ('YYYY-MM-DD')
+     dir,                                             // oneoff only: 'in'|'out' (default 'out')
      recur,                                           // RecurRule (income/bill only)
+     // variable-expense fields:
+     category,                                        // 'Groceries','Gas',... or custom string
+     mode,                                            // 'once' (dated) | 'monthly' (rough estimate)
      overrides: [ { monthKey:'2026-07', amount?, name?, skip? } ]
    }
+
+   Kinds:
+     income   — recurring money in
+     bill      — recurring fixed money out
+     oneoff    — single dated one-time in or out (dir)
+     variable  — category-tagged flexible spend; mode 'once' (dated, backfillable)
+                 or 'monthly' (rough recurring estimate). Always money out.
 
    RecurRule types:
      {type:'weekly', weekday}                 0=Sun..6=Sat
@@ -244,6 +255,19 @@ function occurrencesInMonth(item, monthKey) {
     return finalize(out, y, m);
   }
 
+  if (item.kind === 'variable') {
+    if (item.mode === 'monthly') {
+      // rough monthly estimate: appears every month from its first base segment,
+      // shown at end of month (informational; not a real dated transaction).
+      const segs = (item.base || []).slice().sort((a, b) => monthKeyCmp(a.from, b.from));
+      if (segs.length && monthKeyCmp(segs[0].from, monthKey) <= 0) push(lastDOM(y, m));
+    } else {
+      // 'once' dated entry (backfillable within a month)
+      if (item.date && item.date.slice(0, 7) === monthKey) out.push(parseISO(item.date).getDate());
+    }
+    return finalize(out, y, m);
+  }
+
   const r = item.recur || { type: 'monthly', day: 1 };
   switch (r.type) {
     case 'monthly':
@@ -319,6 +343,7 @@ function finalize(days, y, m) {
    ------------------------------------------------------------ */
 function baseAmountFor(item, monthKey) {
   if (item.kind === 'oneoff') return item.amount || 0;
+  if (item.kind === 'variable' && item.mode !== 'monthly') return item.amount || 0;
   const segs = (item.base || []).slice().sort((a, b) => monthKeyCmp(a.from, b.from));
   let amt = null;
   for (const s of segs) {
@@ -345,7 +370,7 @@ function resolveMonth(monthKey) {
   // Frozen past months read from the snapshot verbatim.
   if (state.snapshots[monthKey]) return state.snapshots[monthKey];
 
-  const income = [], bills = [], oneoffs = [];
+  const income = [], bills = [], oneoffs = [], variables = [];
   for (const item of state.items) {
     // Forward-delete boundary: item ends at endFrom (inclusive stop).
     if (item.endFrom && monthKeyCmp(monthKey, item.endFrom) >= 0) continue;
@@ -355,27 +380,55 @@ function resolveMonth(monthKey) {
     if (ov && ov.skip) continue; // "this period only" removal
 
     const baseAmt = baseAmountFor(item, monthKey);
-    if (item.kind !== 'oneoff' && baseAmt == null) continue; // not started yet
+    const flatAmount = (item.kind === 'oneoff') || (item.kind === 'variable' && item.mode !== 'monthly');
+    if (!flatAmount && baseAmt == null) continue; // not started yet
 
     const name = (ov && ov.name != null) ? ov.name : item.name;
     const amount = (ov && ov.amount != null) ? ov.amount
-                 : (item.kind === 'oneoff' ? (item.amount || 0) : baseAmt);
+                 : (flatAmount ? (item.amount || 0) : baseAmt);
+    // one-off direction: 'in' (income) or 'out' (expense). Default 'out' for
+    // backward-compat with one-offs created before income one-offs existed.
+    const oneoffDir = item.kind === 'oneoff' ? (item.dir || 'out') : null;
 
     for (const o of occ) {
-      const ev = { id: item.id, name, amount, kind: item.kind, date: o.date, day: o.day };
+      const ev = { id: item.id, name, amount, kind: item.kind, dir: oneoffDir, date: o.date, day: o.day };
       if (item.kind === 'income') income.push(ev);
       else if (item.kind === 'bill') bills.push(ev);
-      else oneoffs.push(ev);
+      else if (item.kind === 'variable') {
+        ev.category = item.category || 'Other';
+        ev.mode = item.mode || 'once';
+        variables.push(ev);
+      }
+      else if (oneoffDir === 'in') { ev.oneoff = true; income.push(ev); }  // one-off income
+      else oneoffs.push(ev);                                               // one-off expense
     }
   }
   const sortByDay = (a, b) => a.day - b.day;
-  income.sort(sortByDay); bills.sort(sortByDay); oneoffs.sort(sortByDay);
+  income.sort(sortByDay); bills.sort(sortByDay); oneoffs.sort(sortByDay); variables.sort(sortByDay);
+
+  // Group variable expenses by category, each with a subtotal and its entries.
+  const varGroups = groupByCategory(variables);
 
   const incomeTotal = round2(income.reduce((s, e) => s + e.amount, 0));
-  const expenseTotal = round2([...bills, ...oneoffs].reduce((s, e) => s + e.amount, 0));
+  const variableTotal = round2(variables.reduce((s, e) => s + e.amount, 0));
+  const expenseTotal = round2([...bills, ...oneoffs, ...variables].reduce((s, e) => s + e.amount, 0));
   const remainder = round2(incomeTotal - expenseTotal);
 
-  return { monthKey, income, bills, oneoffs, incomeTotal, expenseTotal, remainder, frozen: false };
+  return { monthKey, income, bills, oneoffs, variables, varGroups, incomeTotal, variableTotal, expenseTotal, remainder, frozen: false };
+}
+
+/* Group variable-expense events by category → [{category, total, entries[]}] */
+function groupByCategory(list) {
+  const by = {};
+  for (const ev of list) {
+    const c = ev.category || 'Other';
+    (by[c] = by[c] || []).push(ev);
+  }
+  return Object.keys(by).sort().map(category => ({
+    category,
+    total: round2(by[category].reduce((s, e) => s + e.amount, 0)),
+    entries: by[category].slice().sort((a, b) => a.day - b.day)
+  })).sort((a, b) => b.total - a.total); // biggest category first
 }
 
 function round2(n) { return Math.round(n * 100) / 100; }
@@ -391,7 +444,7 @@ function freezePastMonths() {
   // Determine the earliest month we have any data for, to bound the loop.
   let earliest = cur;
   for (const item of state.items) {
-    if (item.kind === 'oneoff' && item.date) {
+    if ((item.kind === 'oneoff' || item.kind === 'variable') && item.date) {
       const mk = item.date.slice(0, 7);
       if (monthKeyCmp(mk, earliest) < 0) earliest = mk;
     }
@@ -409,7 +462,7 @@ function freezePastMonths() {
       const resolved = resolveMonth(mk);
       // Only snapshot months that actually had activity — avoids
       // freezing a pile of empty months before her first entry.
-      if (resolved.income.length || resolved.bills.length || resolved.oneoffs.length) {
+      if (resolved.income.length || resolved.bills.length || resolved.oneoffs.length || resolved.variables.length) {
         state.snapshots[mk] = Object.assign({}, resolved, { frozen: true, frozenAt: new Date().toISOString() });
         changed = true;
       }

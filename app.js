@@ -88,8 +88,46 @@ function detailSections(m) {
   const d = el('div', 'detail');
   d.appendChild(section('di', 'Coming in', m.income, 'in', m));
   d.appendChild(section('db', 'Bills', m.bills, 'out', m));
-  d.appendChild(section('do', 'Planned one-offs', m.oneoffs, 'out', m));
+  d.appendChild(variableSection(m));
+  if (m.oneoffs && m.oneoffs.length) d.appendChild(section('do', 'One-time', m.oneoffs, 'out', m));
   return d;
+}
+
+/* Variable expenses: category subtotal rows, tap to expand into entries. */
+function variableSection(m) {
+  const s = el('div', 'dsection dv');
+  const groups = m.varGroups || [];
+  const total = m.variableTotal || 0;
+  const head = el('h4', null,
+    `Variable spending${total ? ` <span class="secttot">${money(total)}</span>` : ''}`);
+  s.appendChild(head);
+  if (!groups.length) { s.appendChild(el('div', 'empty-line', 'Nothing yet')); return s; }
+  for (const g of groups) {
+    const wrap = el('div', 'catrow');
+    const row = el('div', 'row out catsum');
+    row.innerHTML = `<div class="rname"><span class="cattwist">▸</span> ${esc(g.category)}
+        <span class="catcount">${g.entries.length}${g.entries[0].mode === 'monthly' ? ' · monthly guess' : ''}</span></div>
+      <div class="ramt">${money(g.total)}</div>`;
+    const sub = el('div', 'catentries');
+    sub.style.display = 'none';
+    for (const ev of g.entries) {
+      const er = el('div', 'row out subrow');
+      const dnum = ev.mode === 'monthly' ? 'est.' : ordinal(ev.day);
+      er.innerHTML = `<div class="rday">${dnum}</div>
+        <div class="rname">${esc(ev.name === ev.category ? (ev.mode === 'monthly' ? 'Monthly guess' : 'Purchase') : ev.name)}</div>
+        <div class="ramt">${money(ev.amount)}</div>`;
+      if (!m.frozen) er.onclick = (e) => { e.stopPropagation(); openEdit(ev.id, m.monthKey); };
+      sub.appendChild(er);
+    }
+    row.onclick = () => {
+      const open = sub.style.display !== 'none';
+      sub.style.display = open ? 'none' : 'block';
+      row.querySelector('.cattwist').textContent = open ? '▸' : '▾';
+    };
+    wrap.appendChild(row); wrap.appendChild(sub);
+    s.appendChild(wrap);
+  }
+  return s;
 }
 function section(cls, title, list, dir, m) {
   const s = el('div', 'dsection ' + cls);
@@ -98,8 +136,9 @@ function section(cls, title, list, dir, m) {
   for (const ev of list) {
     const r = el('div', 'row ' + dir);
     const dnum = ev.day ? (ev.date ? ordinal(ev.day) : '') : '';
+    const tag = ev.oneoff ? ` <span class="onceflag">one-time</span>` : '';
     r.innerHTML = `<div class="rday">${dnum}</div>
-      <div class="rname">${esc(ev.name)}</div>
+      <div class="rname">${esc(ev.name)}${tag}</div>
       <div class="ramt">${money(ev.amount)}</div>`;
     if (!m.frozen) r.onclick = () => openEdit(ev.id, m.monthKey);
     s.appendChild(r);
@@ -148,7 +187,11 @@ function ribbon(mk, m) {
     });
   };
   const incGroups = dayGroups(m.income);
-  const expGroups = dayGroups([...m.bills, ...m.oneoffs]);
+  // Variable once-entries are dated real spends → show on the ribbon.
+  // Monthly guesses have no real date (they sit at month-end), so exclude them
+  // from the ribbon to avoid implying a specific-day transaction.
+  const datedVars = (m.variables || []).filter(v => v.mode !== 'monthly');
+  const expGroups = dayGroups([...m.bills, ...m.oneoffs, ...datedVars]);
   const maxDayTotal = Math.max(1, ...incGroups.map(g => g.total), ...expGroups.map(g => g.total));
   const sizeOf = total => 9 + Math.round(13 * Math.min(1, total / maxDayTotal)); // 9..22px
 
@@ -238,7 +281,12 @@ function openAdd() {
   $('deleteWrap').style.display = 'none';
   $('fName').value = '';
   $('fAmount').value = '';
+  $('fCatCustom').value = '';
+  curCategory = 'Groceries';
   setKind('income');
+  setOnceDir('out');
+  setVarMode('once');
+  $('fVarDate').value = todayISO();
   $('fRepeat').value = 'biweekly';
   renderRepeatFollow();
   $('fOnceDate').value = todayISO();
@@ -255,18 +303,73 @@ function openEdit(itemId, monthKey) {
   // name/amount reflect what shows THIS month (override-aware)
   const ov = (item.overrides || []).find(o => o.monthKey === monthKey);
   $('fName').value = (ov && ov.name != null) ? ov.name : item.name;
+  const flatAmount = (item.kind === 'oneoff') || (item.kind === 'variable' && item.mode !== 'monthly');
   const amt = (ov && ov.amount != null) ? ov.amount
-    : (item.kind === 'oneoff' ? item.amount : baseAmountFor(item, monthKey));
+    : (flatAmount ? item.amount : baseAmountFor(item, monthKey));
   $('fAmount').value = amt != null ? amt : '';
+  $('fCatCustom').value = '';
   setKind(item.kind);
   if (item.kind === 'oneoff') {
+    setOnceDir(item.dir || 'out');
     $('fOnceDate').value = item.date || todayISO();
+  } else if (item.kind === 'variable') {
+    setVarCategory(item.category || 'Groceries');
+    setVarMode(item.mode || 'once');
+    $('fVarDate').value = item.date || todayISO();
   } else {
+    setOnceDir('out');
     presetRepeatFromRecur(item.recur);
     renderRepeatFollow(item.recur);
   }
   openSheet('editSheet');
 }
+
+let curOnceDir = 'out';
+function setOnceDir(dir) {
+  curOnceDir = dir;
+  document.querySelectorAll('#onceDirSeg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.dir === dir));
+}
+document.querySelectorAll('#onceDirSeg button').forEach(b => b.onclick = () => setOnceDir(b.dataset.dir));
+
+/* ---- variable expenses: categories, mode, custom label ---- */
+const VAR_CATEGORIES = ['Gas', 'Groceries', 'Clothing', 'Household', 'Health', 'Petey', 'Dining out', 'Kids'];
+let curCategory = 'Groceries';
+let curVarMode = 'once';
+
+function renderCatGrid() {
+  const g = $('catGrid');
+  g.innerHTML = '';
+  for (const c of VAR_CATEGORIES) {
+    const b = el('button', 'catbtn' + (c === curCategory ? ' on' : ''), esc(c));
+    b.onclick = () => { curCategory = c; $('fCatCustom').value = ''; refreshCatSelection(); };
+    g.appendChild(b);
+  }
+}
+function refreshCatSelection() {
+  document.querySelectorAll('#catGrid .catbtn').forEach(b =>
+    b.classList.toggle('on', b.textContent === curCategory && !$('fCatCustom').value.trim()));
+}
+$('fCatCustom').addEventListener('input', () => {
+  if ($('fCatCustom').value.trim()) {
+    curCategory = $('fCatCustom').value.trim();
+    document.querySelectorAll('#catGrid .catbtn').forEach(b => b.classList.remove('on'));
+  } else refreshCatSelection();
+});
+function setVarCategory(cat) {
+  const known = VAR_CATEGORIES.includes(cat);
+  curCategory = cat || 'Groceries';
+  $('fCatCustom').value = known ? '' : (cat || '');
+  renderCatGrid();
+}
+function setVarMode(mode) {
+  curVarMode = mode;
+  document.querySelectorAll('#varModeSeg button').forEach(b =>
+    b.classList.toggle('on', b.dataset.mode === mode));
+  // once = a dated purchase (show date); monthly = a rough guess (no date)
+  $('varDateField').style.display = mode === 'once' ? 'block' : 'none';
+}
+document.querySelectorAll('#varModeSeg button').forEach(b => b.onclick = () => setVarMode(b.dataset.mode));
 
 let curKind = 'income';
 function setKind(k) {
@@ -274,17 +377,26 @@ function setKind(k) {
   curKind = k;
   document.querySelectorAll('#kindSeg button').forEach(b =>
     b.classList.toggle('on', b.dataset.k === k));
-  $('recurBlock').style.display = k === 'oneoff' ? 'none' : 'block';
+  const isRecur = (k === 'income' || k === 'bill');
+  $('recurBlock').style.display = isRecur ? 'block' : 'none';
   $('onceBlock').style.display = k === 'oneoff' ? 'block' : 'none';
-  // When switching INTO a recurring kind (e.g. from one-off), make sure the
-  // follow-up fields exist. Seed a sensible day-of-month from the one-off's
-  // date if we have one, so "dance camp on the 12th" becomes "monthly on 12".
-  if (k !== 'oneoff' && prev === 'oneoff') {
+  $('varBlock').style.display = k === 'variable' ? 'block' : 'none';
+  // Variable expenses: the category is the label, so the name field is optional.
+  const nameField = $('fName').closest('.field');
+  if (nameField) nameField.style.display = k === 'variable' ? 'none' : 'block';
+
+  if (k === 'variable') {
+    if (!$('catGrid').children.length) renderCatGrid();
+    if (!document.querySelector('#varModeSeg button.on')) setVarMode('once');
+    if (!$('fVarDate').value) $('fVarDate').value = todayISO();
+  }
+  // When switching INTO a recurring kind, make sure follow-up fields exist.
+  if (isRecur && prev !== 'income' && prev !== 'bill') {
     const onceDate = $('fOnceDate').value;
     const seedDay = onceDate ? parseISO(onceDate).getDate() : new Date().getDate();
     if (!$('fRepeat').value || $('fRepeat').value === 'biweekly') $('fRepeat').value = 'monthly';
     renderRepeatFollow({ type: 'monthly', day: seedDay });
-  } else if (k !== 'oneoff') {
+  } else if (isRecur) {
     if (!$('repeatFollow').children.length) renderRepeatFollow();
   }
 }
@@ -358,22 +470,30 @@ function nextFridayISO() {
 
 /* ---------- save ---------- */
 $('btnSave').onclick = () => {
-  const name = $('fName').value.trim();
   const amount = round2(parseFloat($('fAmount').value));
-  if (!name) { toast('Give it a name first'); $('fName').focus(); return; }
+  // Variable expenses use the category as their label; everything else needs a name.
+  const isVar = curKind === 'variable';
+  const name = isVar ? (curCategory || 'Spending') : $('fName').value.trim();
+  if (!isVar && !name) { toast('Give it a name first'); $('fName').focus(); return; }
+  if (isVar && !curCategory) { toast('Pick a category'); return; }
   if (!(amount >= 0)) { toast('Add an amount'); $('fAmount').focus(); return; }
 
   if (!editCtx) {
     // ADD — no scope question needed
     const item = { id: uid(), kind: curKind, name, overrides: [] };
     if (curKind === 'oneoff') {
-      item.date = $('fOnceDate').value; item.amount = amount;
+      item.date = $('fOnceDate').value; item.amount = amount; item.dir = curOnceDir;
+    } else if (isVar) {
+      item.category = curCategory;
+      item.mode = curVarMode;
+      if (curVarMode === 'monthly') item.base = [{ from: todayMonthKey(), amount }];
+      else { item.amount = amount; item.date = $('fVarDate').value || todayISO(); }
     } else {
       item.recur = buildRecur();
       item.base = [{ from: todayMonthKey(), amount }];
     }
     state.items.push(item);
-    commitAndClose(`Added ${name}`);
+    commitAndClose(isVar ? `Added ${curCategory}` : `Added ${name}`);
     return;
   }
 
@@ -382,17 +502,36 @@ $('btnSave').onclick = () => {
   const mk = editCtx.monthKey;
   const kindChanged = curKind !== item.kind;
 
-  // Changing the KIND (e.g. one-off -> monthly bill) is a fundamental reshape,
-  // not a "this month vs. forward" tweak — rebuild the item in its new shape and
-  // save directly. Without this, the item kept its old shape and vanished.
+  // Changing the KIND is a fundamental reshape — rebuild the item cleanly.
   if (kindChanged) {
     reshapeItem(item, curKind, name, amount, mk);
     commitAndClose(`Updated ${name}`);
     return;
   }
 
-  const pending = { name, amount, kind: curKind, recur: curKind === 'oneoff' ? null : buildRecur(), date: curKind === 'oneoff' ? $('fOnceDate').value : null };
-  if (item.kind === 'oneoff') { applyEdit(item, pending, 'forward'); return; }
+  // Same kind: one-off may change direction.
+  if (item.kind === 'oneoff') {
+    item.dir = curOnceDir;
+    const pending = { name, amount, kind: curKind, recur: null, date: $('fOnceDate').value };
+    applyEdit(item, pending, 'forward');
+    return;
+  }
+
+  // Same kind: variable expense edit (category / amount / date / mode).
+  if (item.kind === 'variable') {
+    item.category = curCategory; item.name = curCategory; item.mode = curVarMode;
+    if (curVarMode === 'monthly') {
+      delete item.date; delete item.amount;
+      item.base = [{ from: mk, amount }];
+    } else {
+      delete item.base;
+      item.amount = amount; item.date = $('fVarDate').value || todayISO();
+    }
+    commitAndClose(`Updated ${curCategory}`);
+    return;
+  }
+
+  const pending = { name, amount, kind: curKind, recur: buildRecur(), date: null };
   askScope(item, pending);
 };
 
@@ -402,15 +541,18 @@ function reshapeItem(item, newKind, name, amount, mk) {
   item.name = name;
   item.overrides = [];        // old overrides referenced the old shape; clear them
   delete item.endFrom;
+  delete item.dir; delete item.category; delete item.mode;
+  delete item.date; delete item.amount; delete item.base; delete item.recur;
   if (newKind === 'oneoff') {
-    item.recur = undefined; delete item.recur;
-    item.base = undefined; delete item.base;
     item.date = $('fOnceDate').value;
     item.amount = amount;
+    item.dir = curOnceDir;
+  } else if (newKind === 'variable') {
+    item.category = curCategory; item.name = curCategory; item.mode = curVarMode;
+    if (curVarMode === 'monthly') item.base = [{ from: mk, amount }];
+    else { item.amount = amount; item.date = $('fVarDate').value || todayISO(); }
   } else {
-    delete item.date; delete item.amount;
     item.recur = buildRecur();
-    // start the recurring life at the month being edited (forward-only)
     item.base = [{ from: mk, amount }];
   }
 }
