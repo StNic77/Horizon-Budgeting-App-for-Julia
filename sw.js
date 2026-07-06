@@ -1,6 +1,6 @@
 /* Horizon service worker — cache-first shell for offline PWA.
    Bump VERSION on every release to bust the installed cache. */
-const VERSION = 'horizon-v12';
+const VERSION = 'horizon-v13';
 const ASSETS = [
   './',
   './index.html',

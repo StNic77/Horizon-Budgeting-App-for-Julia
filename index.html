@@ -88,8 +88,8 @@ input,select{font-family:inherit;font-size:16px}
 /* ---------- top bar ---------- */
 .topbar{
   position:sticky;top:0;z-index:20;
-  display:flex;align-items:center;gap:12px;
-  padding:calc(env(safe-area-inset-top,0) + 16px) 18px 14px;
+  display:flex;align-items:center;gap:7px;
+  padding:calc(env(safe-area-inset-top,0) + 16px) 14px 14px;
   background:linear-gradient(180deg, var(--sky) 62%, transparent);
 }
 .brand{display:flex;align-items:center;gap:9px;font-weight:600;letter-spacing:.02em}
@@ -109,12 +109,14 @@ input,select{font-family:inherit;font-size:16px}
 .brand span{font-size:18px;color:var(--ink)}
 .topbar .spacer{flex:1}
 .tb-btn{
-  min-width:var(--tap);height:38px;padding:0 14px;border-radius:999px;
-  background:var(--sky-soft);color:var(--ink);font-size:13.5px;font-weight:600;
-  display:inline-flex;align-items:center;gap:6px;border:1px solid var(--sky-line);
+  flex:none;min-width:0;height:38px;padding:0 12px;border-radius:999px;
+  background:var(--sky-soft);color:var(--ink);font-size:13px;font-weight:600;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  border:1px solid var(--sky-line);white-space:nowrap;line-height:1;
 }
 .tb-btn:active{background:var(--sky-line)}
-.tb-icon{padding:0;width:38px;justify-content:center;font-size:16px}
+.tb-icon{padding:0;width:36px;flex:none;justify-content:center;font-size:16px}
+.brand{flex:none}
 
 /* ---------- month feed ---------- */
 .feed{padding:6px 16px 0;display:flex;flex-direction:column;gap:18px}
@@ -334,6 +336,8 @@ input,select{font-family:inherit;font-size:16px}
   .mhead{padding:15px 15px 4px}
   .mname{font-size:18px}
   .detail{padding:0 12px 14px}
+  .brand span{display:none}          /* keep the sun mark, drop the wordmark to fit the top bar */
+  .topbar{gap:6px;padding-left:12px;padding-right:12px}
 }
 
 /* When a sheet/onboarding is open, stop the page behind from scrolling. */
