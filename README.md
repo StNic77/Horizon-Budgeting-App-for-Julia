@@ -1,4 +1,4 @@
-# Horizon — v1 (build `horizon-1` / sw `horizon-v1`)
+# Horizon  v1 (build `horizon-1` / sw `horizon-v1`)
 
 A calm, forward-looking money planner. Answers, month by month: *what's
 coming in, what's going out, what's left* — plus a live timeline of the
